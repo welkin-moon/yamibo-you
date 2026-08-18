@@ -1,6 +1,10 @@
 package com.welkinmoon.yamiboyou.data
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.FormBody
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -65,6 +69,52 @@ class BbsRepository(
             formHash = formHash,
             canReply = formHash != null && doc.selectFirst("form[id^=fastpostform], #fastpostform") != null
         )
+    }
+
+    /**
+     * Submit through Discuz X3.5's fast-post endpoint using the already authenticated
+     * BBS CookieJar. We intentionally do not synthesize cookies or bypass formhash.
+     */
+    suspend fun reply(
+        forum: BbsForum,
+        thread: BbsThread,
+        formHash: String,
+        message: String
+    ) = withContext(Dispatchers.IO) {
+        require(message.isNotBlank()) { "回复内容不能为空" }
+        require(formHash.isNotBlank()) { "缺少 formhash，请刷新帖子后重试" }
+
+        val body = FormBody.Builder()
+            .add("formhash", formHash)
+            .add("message", message.trim())
+            .add("usesig", "1")
+            .add("subject", "")
+            .add("replysubmit", "yes")
+            .build()
+
+        val url = buildString {
+            append(YamiboSite.BBS.baseUrl)
+            append("forum.php?mod=post&action=reply")
+            append("&fid=").append(forum.id)
+            append("&tid=").append(thread.id)
+            append("&extra=&replysubmit=yes&infloat=yes&handlekey=fastpost&inajax=1")
+        }
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "YamiboYou/0.3 Android")
+            .header("Referer", thread.url)
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { "回复失败：HTTP ${response.code}" }
+            val text = response.body?.string().orEmpty()
+            val error = Regex("errorhandle_[^(<]*|showDialog\\(['\"]([^'\"]+)")
+                .find(text)?.groupValues?.getOrNull(1)
+            check(!text.contains("errorhandle_", ignoreCase = true)) {
+                error?.takeIf { it.isNotBlank() } ?: "Discuz 返回了回复错误"
+            }
+        }
     }
 
     private fun parseThreadRow(row: Element): BbsThread? {

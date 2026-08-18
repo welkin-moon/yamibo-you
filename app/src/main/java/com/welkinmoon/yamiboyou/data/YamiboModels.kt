@@ -63,3 +63,31 @@ data class BbsThreadPage(
     val formHash: String? = null,
     val canReply: Boolean = false
 )
+
+data class NovelWork(
+    val id: Long?,
+    val title: String,
+    val url: String,
+    val summary: String? = null,
+    val category: String? = null
+)
+
+data class NovelUpdate(
+    val work: NovelWork,
+    val chapterTitle: String? = null,
+    val chapterUrl: String? = null,
+    val author: String? = null,
+    val authorUrl: String? = null,
+    val updatedAt: String? = null
+)
+
+data class NewSiteSection(
+    val title: String,
+    val items: List<NovelWork>
+)
+
+data class NewSiteFeed(
+    val recommendations: List<NewSiteSection>,
+    val recentUpdates: List<NovelUpdate>,
+    val rankings: List<NewSiteSection>
+)

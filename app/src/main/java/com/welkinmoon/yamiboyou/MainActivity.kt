@@ -20,7 +20,6 @@ import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DynamicTonalPalette
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,12 +45,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.welkinmoon.yamiboyou.data.ContentItem
 import com.welkinmoon.yamiboyou.data.YamiboRepository
 import com.welkinmoon.yamiboyou.data.YamiboSite
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,9 +95,7 @@ private fun YamiboHome() {
     LaunchedEffect(selectedSite, reloadToken) {
         if (selectedSite == null) return@LaunchedEffect
         loadState = LoadState.Loading
-        loadState = runCatching {
-            repository.load(selectedSite)
-        }.fold(
+        loadState = runCatching { repository.load(selectedSite) }.fold(
             onSuccess = { LoadState.Ready(it) },
             onFailure = { LoadState.Failed(it.message ?: "加载失败") }
         )

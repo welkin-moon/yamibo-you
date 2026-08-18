@@ -25,7 +25,9 @@ import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,9 +67,12 @@ import com.welkinmoon.yamiboyou.data.BbsPost
 import com.welkinmoon.yamiboyou.data.BbsRepository
 import com.welkinmoon.yamiboyou.data.BbsThread
 import com.welkinmoon.yamiboyou.data.BbsThreadPage
-import com.welkinmoon.yamiboyou.data.ContentItem
-import com.welkinmoon.yamiboyou.data.YamiboRepository
-import com.welkinmoon.yamiboyou.data.YamiboSite
+import com.welkinmoon.yamiboyou.data.NewSiteFeed
+import com.welkinmoon.yamiboyou.data.NewSiteRepository
+import com.welkinmoon.yamiboyou.data.NewSiteSection
+import com.welkinmoon.yamiboyou.data.NovelUpdate
+import com.welkinmoon.yamiboyou.data.NovelWork
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -313,18 +320,115 @@ private fun ThreadReader(
             item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, screen.thread, it) }
-                    if (page.canReply) {
-                        Text("已检测到登录会话与 formhash，可在下一阶段接原生回复。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    }
                 }
             }
             items(page.posts, key = { it.id }) { post ->
                 PostCard(post)
                 HorizontalDivider()
             }
+            if (page.canReply && page.formHash != null) {
+                item {
+                    ReplyEditor(
+                        repository = repository,
+                        forum = screen.forum,
+                        thread = screen.thread,
+                        page = page,
+                        onReloaded = { state = LoadState.Ready(it) }
+                    )
+                }
+            } else {
+                item {
+                    Text(
+                        "登录论坛后可在这里直接回复。",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             item {
                 Box(Modifier.padding(16.dp)) {
                     Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, screen.thread, it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplyEditor(
+    repository: BbsRepository,
+    forum: BbsForum,
+    thread: BbsThread,
+    page: BbsThreadPage,
+    onReloaded: (BbsThreadPage) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var message by remember(thread.id) { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("回复主题", style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(
+                value = message,
+                onValueChange = { message = it },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                maxLines = 8,
+                enabled = !sending,
+                placeholder = { Text("写下回复…") }
+            )
+            feedback?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (it.startsWith("已发送")) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error
+                )
+            }
+            Button(
+                onClick = {
+                    val text = message.trim()
+                    if (text.isEmpty()) {
+                        feedback = "回复内容不能为空"
+                        return@Button
+                    }
+                    val formHash = page.formHash ?: return@Button
+                    sending = true
+                    feedback = null
+                    scope.launch {
+                        runCatching {
+                            repository.reply(forum, thread, formHash, text)
+                            var lastPage = repository.loadThread(thread, page.totalPages)
+                            if (lastPage.totalPages > lastPage.currentPage) {
+                                lastPage = repository.loadThread(thread, lastPage.totalPages)
+                            }
+                            lastPage
+                        }.onSuccess { reloaded ->
+                            message = ""
+                            feedback = "已发送，已刷新到最新回复"
+                            onReloaded(reloaded)
+                        }.onFailure { error ->
+                            feedback = error.message ?: "回复失败"
+                        }
+                        sending = false
+                    }
+                },
+                enabled = !sending && message.isNotBlank()
+            ) {
+                if (sending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.width(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("发送中")
+                } else {
+                    Icon(Icons.Outlined.Send, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("发送回复")
                 }
             }
         }
@@ -371,15 +475,108 @@ private fun Pager(current: Int, total: Int, onPage: (Int) -> Unit) {
 
 @Composable
 private fun NewSitePane(refreshToken: Int) {
-    val repository = remember { YamiboRepository() }
-    var state by remember { mutableStateOf<LoadState<List<ContentItem>>>(LoadState.Loading) }
+    val repository = remember { NewSiteRepository() }
+    var state by remember { mutableStateOf<LoadState<NewSiteFeed>>(LoadState.Loading) }
     LaunchedEffect(refreshToken) {
         state = LoadState.Loading
-        state = runCatching { repository.load(YamiboSite.NEW_SITE) }.fold(
+        state = runCatching { repository.loadNovelFeed() }.fold(
             { LoadState.Ready(it) }, { LoadState.Failed(it.message ?: "新站加载失败") }
         )
     }
-    LoadBox(state) { items -> ContentList(items) }
+    LoadBox(state) { feed -> NewSiteFeedList(feed) }
+}
+
+@Composable
+private fun NewSiteFeedList(feed: NewSiteFeed) {
+    val uriHandler = LocalUriHandler.current
+    val hasContent = feed.recommendations.isNotEmpty() || feed.recentUpdates.isNotEmpty() || feed.rankings.isNotEmpty()
+    if (!hasContent) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("暂时没有解析到新站内容")
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        feed.recommendations.forEach { section ->
+            item(key = "recommend-${section.title}") { SectionTitle(section.title) }
+            items(section.items, key = { "recommend-${section.title}-${it.url}" }) { work ->
+                NovelWorkCard(work) { uriHandler.openUri(work.url) }
+            }
+        }
+
+        if (feed.recentUpdates.isNotEmpty()) {
+            item(key = "recent-title") { SectionTitle("最近更新") }
+            items(feed.recentUpdates.take(30), key = { "update-${it.work.url}-${it.chapterUrl}" }) { update ->
+                NovelUpdateCard(update) {
+                    uriHandler.openUri(update.chapterUrl ?: update.work.url)
+                }
+            }
+        }
+
+        feed.rankings.forEach { section ->
+            item(key = "rank-${section.title}") { SectionTitle(section.title) }
+            items(section.items, key = { "rank-${section.title}-${it.url}" }) { work ->
+                NovelWorkCard(work) { uriHandler.openUri(work.url) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(
+        title,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold
+    )
+}
+
+@Composable
+private fun NovelWorkCard(work: NovelWork, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(work.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                work.category?.let {
+                    Spacer(Modifier.width(8.dp))
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            work.summary?.let {
+                Text(
+                    it,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NovelUpdateCard(update: NovelUpdate, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(update.work.title, style = MaterialTheme.typography.titleSmall)
+            update.chapterTitle?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                update.author?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                update.updatedAt?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -401,30 +598,6 @@ private fun <T> LoadBox(state: LoadState<T>, content: @Composable (T) -> Unit) {
 }
 
 @Composable
-private fun ContentList(items: List<ContentItem>) {
-    val uriHandler = LocalUriHandler.current
-    if (items.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("暂时没有解析到内容") }
-        return
-    }
-    LazyColumn(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        items(items, key = { it.url }) { item ->
-            Card(onClick = { uriHandler.openUri(item.url) }, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(item.title, style = MaterialTheme.typography.titleMedium)
-                    item.subtitle?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun ProfilePlaceholder() {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -432,9 +605,9 @@ private fun ProfilePlaceholder() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(Icons.Outlined.AccountCircle, contentDescription = null)
-        Text("账号中心将在下一阶段接入")
+        Text("账号中心正在接入")
         Text(
-            "论坛与新站使用独立 CookieJar；登录、绑定和持久化会建立在这层 session abstraction 上。",
+            "论坛与新站使用独立 CookieJar。下一步会加入持久登录与账号状态管理。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

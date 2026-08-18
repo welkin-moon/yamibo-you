@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -83,7 +84,7 @@ private sealed interface LoadState<out T> {
 private sealed interface BbsScreen {
     data object Forums : BbsScreen
     data class Forum(val forum: BbsForum, val page: Int = 1) : BbsScreen
-    data class Thread(val thread: BbsThread, val page: Int = 1) : BbsScreen
+    data class Thread(val forum: BbsForum, val thread: BbsThread, val page: Int = 1) : BbsScreen
 }
 
 @Composable
@@ -118,7 +119,7 @@ private fun YamiboHome() {
 
     fun navigateBack() {
         bbsScreen = when (val current = bbsScreen) {
-            is BbsScreen.Thread -> BbsScreen.Forums
+            is BbsScreen.Thread -> BbsScreen.Forum(current.forum)
             is BbsScreen.Forum -> BbsScreen.Forums
             BbsScreen.Forums -> BbsScreen.Forums
         }
@@ -186,9 +187,9 @@ private fun YamiboHome() {
                     screen = bbsScreen,
                     refreshToken = refreshToken,
                     onOpenForum = { bbsScreen = BbsScreen.Forum(it) },
-                    onOpenThread = { bbsScreen = BbsScreen.Thread(it) },
+                    onOpenThread = { forum, thread -> bbsScreen = BbsScreen.Thread(forum, thread) },
                     onOpenForumPage = { forum, page -> bbsScreen = BbsScreen.Forum(forum, page) },
-                    onOpenThreadPage = { thread, page -> bbsScreen = BbsScreen.Thread(thread, page) }
+                    onOpenThreadPage = { forum, thread, page -> bbsScreen = BbsScreen.Thread(forum, thread, page) }
                 )
                 1 -> NewSitePane(refreshToken)
                 else -> ProfilePlaceholder()
@@ -202,9 +203,9 @@ private fun BbsPane(
     screen: BbsScreen,
     refreshToken: Int,
     onOpenForum: (BbsForum) -> Unit,
-    onOpenThread: (BbsThread) -> Unit,
+    onOpenThread: (BbsForum, BbsThread) -> Unit,
     onOpenForumPage: (BbsForum, Int) -> Unit,
-    onOpenThreadPage: (BbsThread, Int) -> Unit
+    onOpenThreadPage: (BbsForum, BbsThread, Int) -> Unit
 ) {
     val repository = remember { BbsRepository() }
     when (screen) {
@@ -248,7 +249,7 @@ private fun ThreadIndex(
     repository: BbsRepository,
     screen: BbsScreen.Forum,
     refreshToken: Int,
-    onOpenThread: (BbsThread) -> Unit,
+    onOpenThread: (BbsForum, BbsThread) -> Unit,
     onOpenPage: (BbsForum, Int) -> Unit
 ) {
     var state by remember(screen.forum.id, screen.page) { mutableStateOf<LoadState<BbsForumPage>>(LoadState.Loading) }
@@ -263,9 +264,9 @@ private fun ThreadIndex(
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item { Pager(page.currentPage, page.totalPages, { onOpenPage(screen.forum, it) }) }
+            item { Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, it) } }
             items(page.threads, key = { it.id }) { thread ->
-                Card(onClick = { onOpenThread(thread) }, modifier = Modifier.fillMaxWidth()) {
+                Card(onClick = { onOpenThread(screen.forum, thread) }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (thread.sticky) {
@@ -289,7 +290,7 @@ private fun ThreadIndex(
                     }
                 }
             }
-            item { Pager(page.currentPage, page.totalPages, { onOpenPage(screen.forum, it) }) }
+            item { Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, it) } }
         }
     }
 }
@@ -299,7 +300,7 @@ private fun ThreadReader(
     repository: BbsRepository,
     screen: BbsScreen.Thread,
     refreshToken: Int,
-    onOpenPage: (BbsThread, Int) -> Unit
+    onOpenPage: (BbsForum, BbsThread, Int) -> Unit
 ) {
     var state by remember(screen.thread.id, screen.page) { mutableStateOf<LoadState<BbsThreadPage>>(LoadState.Loading) }
     LaunchedEffect(screen.thread.id, screen.page, refreshToken) {
@@ -312,7 +313,7 @@ private fun ThreadReader(
         LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Pager(page.currentPage, page.totalPages, { onOpenPage(screen.thread, it) })
+                    Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, screen.thread, it) }
                     if (page.canReply) {
                         Text("已检测到登录会话与 formhash，可在下一阶段接原生回复。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
@@ -324,7 +325,7 @@ private fun ThreadReader(
             }
             item {
                 Box(Modifier.padding(16.dp)) {
-                    Pager(page.currentPage, page.totalPages, { onOpenPage(screen.thread, it) })
+                    Pager(page.currentPage, page.totalPages) { onOpenPage(screen.forum, screen.thread, it) }
                 }
             }
         }
